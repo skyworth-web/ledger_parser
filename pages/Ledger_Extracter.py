@@ -24,7 +24,6 @@ def initialize_session():
     if 'metadata' not in st.session_state:
         st.session_state.metadata = None
 
-
 def process_file():
     if st.session_state.uploaded_file is None:
         st.warning("No file uploaded!")
@@ -48,17 +47,16 @@ def process_file():
             # Load entire file (no header yet)
             full_df = pd.read_excel(st.session_state.output_path, header=None)
 
-            # Find where transaction table starts (look for "date" in first col)
+            # Find where transaction table starts
             table_start_idx = full_df[0].astype(str).str.lower().eq("date").idxmax()
 
-            # Split into metadata + data table
+            # Split metadata and table
             metadata = full_df.iloc[:table_start_idx]
             table = pd.read_excel(st.session_state.output_path, skiprows=table_start_idx)
 
             if "date" in table.columns:
                 table["date"] = pd.to_datetime(table["date"], errors='coerce')
 
-            # Save both parts
             st.session_state.metadata = metadata
             st.session_state.df = table
             st.session_state.last_saved_df = table.copy()
@@ -72,20 +70,24 @@ def process_file():
         st.error(f"Error processing file: {str(e)}")
         return False
 
-
 def save_changes():
     try:
         with pd.ExcelWriter(st.session_state.output_path, engine='openpyxl') as writer:
-            # Write metadata
+            # Save metadata
             st.session_state.metadata.to_excel(writer, index=False, header=False)
-            # Write edited table just below it
-            st.session_state.df.to_excel(writer, index=False, startrow=len(st.session_state.metadata))
+
+            # Add a spacer row
+            pd.DataFrame([[]]).to_excel(writer, index=False, header=False, startrow=len(st.session_state.metadata))
+
+            # Save table
+            st.session_state.df.to_excel(writer, index=False, startrow=len(st.session_state.metadata) + 2)
+
         st.session_state.last_saved_df = st.session_state.df.copy()
         st.success("✅ Changes saved successfully!")
         st.session_state.editor_key += 1
+
     except Exception as e:
         st.error(f"Error saving file: {str(e)}")
-
 
 def main():
     initialize_session()
@@ -105,60 +107,75 @@ def main():
                 st.rerun()
 
     if st.session_state.processed and st.session_state.df is not None:
-        st.subheader("Edit Transactions")
+        # --- Metadata Section ---
+        st.subheader("📝 Edit Metadata")
 
-        with st.form("edit_form", clear_on_submit=False):
-            # Automatically make all columns editable
-            column_config = {}
-            for col in st.session_state.df.columns:
-                dtype = st.session_state.df[col].dtype
+        # Reset column names for metadata
+        meta_df = st.session_state.metadata.copy()
+        meta_df.columns = [f"Column_{i}" for i in range(meta_df.shape[1])]
 
-                if pd.api.types.is_datetime64_any_dtype(dtype):
-                    column_config[col] = st.column_config.DateColumn(col, format="YYYY-MM-DD", required=False)
-                elif pd.api.types.is_numeric_dtype(dtype):
-                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
-                else:
-                    column_config[col] = st.column_config.TextColumn(col)
+        meta_column_config = {
+            col: st.column_config.TextColumn(col)
+            for col in meta_df.columns
+        }
 
+        edited_metadata = st.data_editor(
+            meta_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=200,
+            key=f"meta_editor_{st.session_state.editor_key}",
+            column_config=meta_column_config
+        )
 
-            # Apply special formatting if certain columns exist
-            if "date" in column_config:
-                column_config["date"] = st.column_config.DateColumn("Date", required=False)
-            if "amount" in column_config:
-                column_config["amount"] = st.column_config.NumberColumn("Amount", format="$%.2f")
+        if st.button("✅ Apply Metadata Changes"):
+            st.session_state.metadata = edited_metadata
+            st.success("Metadata updated.")
 
-            edited_df = st.data_editor(
-                st.session_state.df,
-                num_rows="dynamic",
-                use_container_width=True,
-                height=500,
-                key=f"editor_{st.session_state.editor_key}",
-                column_config=column_config
-            )
+        # --- Transaction Section ---
+        st.subheader("📊 Edit Transactions")
 
-            submitted = st.form_submit_button("✅ Apply Changes")
-            if submitted:
-                st.session_state.df = edited_df
-                st.success("Changes applied to table.")
+        column_config = {}
+        for col in st.session_state.df.columns:
+            dtype = st.session_state.df[col].dtype
+            if pd.api.types.is_datetime64_any_dtype(dtype):
+                column_config[col] = st.column_config.DateColumn(col, format="YYYY-MM-DD", required=False)
+            elif pd.api.types.is_numeric_dtype(dtype):
+                column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+            else:
+                column_config[col] = st.column_config.TextColumn(col)
 
-        # Action buttons
+        edited_df = st.data_editor(
+            st.session_state.df,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=500,
+            key=f"editor_{st.session_state.editor_key}",
+            column_config=column_config
+        )
+
+        if st.button("✅ Apply Table Changes"):
+            st.session_state.df = edited_df
+            st.success("Transaction table updated.")
+
+        # --- Actions ---
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("💾 Save Changes", help="Save changes to original file"):
+            if st.button("💾 Save Changes"):
                 save_changes()
         with col2:
-            if st.button("🔄 Reset to Last Saved", help="Discard unsaved changes"):
+            if st.button("🔄 Reset Table"):
                 st.session_state.df = st.session_state.last_saved_df.copy()
                 st.session_state.editor_key += 1
                 st.rerun()
         with col3:
-            if st.button("✖️ New File", help="Start over with a new file"):
-                for key in ['processed', 'output_path', 'df', 'uploaded_file', 'last_saved_df']:
+            if st.button("✖️ New File"):
+                for key in ['processed', 'output_path', 'df', 'uploaded_file', 'last_saved_df', 'metadata']:
                     st.session_state[key] = None
                 st.session_state.editor_key = 0
                 st.rerun()
 
-        # File info and download
+        # --- Download Button ---
         st.divider()
         st.caption(f"Editing: {os.path.basename(st.session_state.output_path)}")
         with open(st.session_state.output_path, "rb") as f:
