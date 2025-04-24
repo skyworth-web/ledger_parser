@@ -5,7 +5,7 @@ from api.ocr.excel_parser import excel_parser
 from api.ocr.image_parser import image_parser
 
 st.set_page_config(page_title="Bank Statement Editor", layout="centered")
-st.title("f3e6 Bank Statement Editor")
+st.title("\U0001F3E6 Bank Statement Editor")
 
 def initialize_session():
     if 'processed' not in st.session_state:
@@ -159,7 +159,7 @@ def main():
             st.session_state.metadata = edited_meta
 
         # Negate Button
-        if st.button("⇄️ Negate Opening Balance"):
+        if st.button("↔️ Negate Opening Balance"):
             mask = edited_meta["Field"].str.lower().str.contains("opening balance", na=False)
             if mask.any():
                 idx = mask.idxmax()
