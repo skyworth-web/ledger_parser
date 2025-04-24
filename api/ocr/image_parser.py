@@ -116,7 +116,6 @@ def image_parser(uploaded_file):
 
     if not df.empty:
         df = validate_and_fix(ledger_name, opening_balance, df)
-        print(df)
         export_to_excel(
             df,
             output_path=output_path,

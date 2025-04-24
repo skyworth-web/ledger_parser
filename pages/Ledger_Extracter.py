@@ -103,6 +103,8 @@ def recalculate_balance(df, opening_balance=None):
             df.at[i, "balance"] = opening_balance + credit - debit
         else:
             df.at[i, "balance"] = df.at[i-1, "balance"] + credit - debit
+    
+    print("====> recalculted balance", df)
     return df
 
 
