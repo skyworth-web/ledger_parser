@@ -152,43 +152,68 @@ def main():
         # === Editable Transactions Section ===
         st.subheader("📊 Edit Transactions")
 
-        with st.form("edit_form", clear_on_submit=False):
-            column_config = {}
-            for col in st.session_state.df.columns:
-                dtype = st.session_state.df[col].dtype
-                if pd.api.types.is_datetime64_any_dtype(dtype):
-                    column_config[col] = st.column_config.DateColumn(col, format="YYYY-MM-DD", required=False)
-                elif pd.api.types.is_numeric_dtype(dtype):
-                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
-                else:
-                    column_config[col] = st.column_config.TextColumn(col)
+        # Always use current working df
+        working_df = st.session_state.df.copy()
 
-            edited_df = st.data_editor(
-                st.session_state.df,
-                num_rows="dynamic",
-                use_container_width=True,
-                height=500,
-                key=f"editor_{st.session_state.editor_key}",
-                column_config=column_config
-            )
-
-            submitted = st.form_submit_button("✅ Apply Changes")
-            if submitted:
-                # Get opening balance from metadata if exists
+        # Try to get opening balance from metadata
+        opening_balance = None
+        if st.session_state.metadata is not None:
+            meta_df = st.session_state.metadata
+            try:
+                meta_df.columns = ["Field", "Value"]
+                opening_balance_row = meta_df[meta_df["Field"].str.lower().str.contains("opening balance")]
+                if not opening_balance_row.empty:
+                    opening_balance = float(opening_balance_row["Value"].values[0])
+            except:
                 opening_balance = None
-                if st.session_state.metadata is not None:
-                    meta_df = st.session_state.metadata
-                    try:
-                        meta_df.columns = ["Field", "Value"]
-                        opening_balance_row = meta_df[meta_df["Field"].str.lower().str.contains("opening balance")]
-                        if not opening_balance_row.empty:
-                            opening_balance = float(opening_balance_row["Value"].values[0])
-                    except:
-                        opening_balance = None
 
-                updated_df = recalculate_balance(edited_df, opening_balance=opening_balance)
-                st.session_state.df = updated_df
-                st.success("✅ Changes applied and balances recalculated.")
+        # Recalculate balance before editing
+        working_df = recalculate_balance(working_df, opening_balance=opening_balance)
+
+        # Define column configs
+        column_config = {}
+        for col in working_df.columns:
+            dtype = working_df[col].dtype
+            if pd.api.types.is_datetime64_any_dtype(dtype):
+                column_config[col] = st.column_config.DateColumn(col, format="YYYY-MM-DD", required=False)
+            elif pd.api.types.is_numeric_dtype(dtype):
+                if col.lower() == "amount":
+                    column_config[col] = st.column_config.NumberColumn(col, format="$%.2f")
+                else:
+                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+            else:
+                column_config[col] = st.column_config.TextColumn(col)
+
+        # Disable editing of balance column (optional)
+        if "balance" in column_config:
+            column_config["balance"] = st.column_config.NumberColumn("Balance", format="%.2f", disabled=True)
+
+        # Show editable table (no balance yet)
+        editable_columns = [col for col in working_df.columns if col.lower() not in ["balance"]]
+        editable_df = working_df[editable_columns].copy()
+
+        edited_df = st.data_editor(
+            editable_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=500,
+            key=f"editor_{st.session_state.editor_key}",
+            column_config={col: column_config[col] for col in editable_columns}
+        )
+
+        # Detect if anything changed from previous
+        if not edited_df.equals(st.session_state.df[editable_columns]):
+            # Copy edited values into df
+            for col in editable_columns:
+                st.session_state.df[col] = edited_df[col]
+
+            # Recalculate balance
+            st.session_state.df = recalculate_balance(st.session_state.df, opening_balance=opening_balance)
+            st.success("✅ Balance recalculated after edit.")
+
+        # Show updated table with balance
+        st.dataframe(st.session_state.df, use_container_width=True)
+
 
 
         col1, col2, col3 = st.columns(3)
