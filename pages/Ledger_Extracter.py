@@ -121,18 +121,27 @@ def process_file():
 
 def save_changes():
     try:
-        # ensure closing balance up to date
-        closing = st.session_state.df['balance'].iloc[-1]
-        update_closing_balance_in_metadata(closing)
+        df_to_save = st.session_state.df.copy()
+
+        # Format 'date' column to YYYY-MM-DD if it exists
+        if 'date' in df_to_save.columns:
+            df_to_save['date'] = df_to_save['date'].dt.strftime('%Y-%m-%d')
+
         with pd.ExcelWriter(st.session_state.output_path, engine='openpyxl') as writer:
             st.session_state.metadata.to_excel(writer, index=False, header=False)
             pd.DataFrame([[]]).to_excel(writer, index=False, header=False, startrow=len(st.session_state.metadata))
-            st.session_state.df.to_excel(writer, index=False, startrow=len(st.session_state.metadata)+1)
+            df_to_save.to_excel(
+                writer,
+                index=False,
+                startrow=len(st.session_state.metadata) + 1
+            )
+
         st.session_state.last_saved_df = st.session_state.df.copy()
         st.success("✅ Changes saved successfully!")
         st.session_state.editor_key += 1
     except Exception as e:
         st.error(f"Error saving file: {e}")
+
 
 
 def main():
