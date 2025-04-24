@@ -113,10 +113,10 @@ def image_parser(uploaded_file):
             opening_balance = df['balance'].iloc[0] + df['debit'].iloc[0] - df['credit'].iloc[0]
         else:
             opening_balance = 0
-
+    
     if not df.empty:
         df = validate_and_fix(ledger_name, opening_balance, df)
-        print(df)
+        closing_balance = df['balance'].iloc[-1]
         export_to_excel(
             df,
             output_path=output_path,
