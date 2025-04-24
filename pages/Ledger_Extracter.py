@@ -78,6 +78,33 @@ def save_changes():
     except Exception as e:
         st.error(f"Error saving file: {str(e)}")
 
+def recalculate_balance(df, opening_balance=None):
+    df = df.copy()
+    if opening_balance is None:
+        try:
+            # Try to get from metadata if exists
+            opening_balance = float(
+                df.loc[0, "balance"]
+                if "balance" in df.columns
+                else 0
+            )
+        except:
+            opening_balance = 0
+
+    df["balance"] = opening_balance
+    for i in range(len(df)):
+        debit = df.at[i, "debit"] if "debit" in df.columns else 0
+        credit = df.at[i, "credit"] if "credit" in df.columns else 0
+
+        debit = float(debit) if pd.notna(debit) else 0
+        credit = float(credit) if pd.notna(credit) else 0
+
+        if i == 0:
+            df.at[i, "balance"] = opening_balance + credit - debit
+        else:
+            df.at[i, "balance"] = df.at[i-1, "balance"] + credit - debit
+    return df
+
 
 def main():
     initialize_session()
@@ -145,8 +172,22 @@ def main():
 
             submitted = st.form_submit_button("✅ Apply Changes")
             if submitted:
-                st.session_state.df = edited_df
-                st.success("Changes applied to table.")
+                # Get opening balance from metadata if exists
+                opening_balance = None
+                if st.session_state.metadata is not None:
+                    meta_df = st.session_state.metadata
+                    try:
+                        meta_df.columns = ["Field", "Value"]
+                        opening_balance_row = meta_df[meta_df["Field"].str.lower().str.contains("opening balance")]
+                        if not opening_balance_row.empty:
+                            opening_balance = float(opening_balance_row["Value"].values[0])
+                    except:
+                        opening_balance = None
+
+                updated_df = recalculate_balance(edited_df, opening_balance=opening_balance)
+                st.session_state.df = updated_df
+                st.success("✅ Changes applied and balances recalculated.")
+
 
         col1, col2, col3 = st.columns(3)
         with col1:
