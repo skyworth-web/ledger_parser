@@ -24,6 +24,24 @@ def initialize_session():
     if 'metadata' not in st.session_state:
         st.session_state.metadata = None
 
+def recalculate_balance(df, opening_balance=0):
+    df = df.copy()
+    if not all(col in df.columns for col in ['debit', 'credit']):
+        return df
+    df[['debit', 'credit']] = df[['debit', 'credit']].fillna(0)
+    df['balance'] = opening_balance + (df['credit'] - df['debit']).cumsum()
+    return df
+
+def update_closing_balance_in_metadata(balance):
+    try:
+        cb_mask = st.session_state.metadata["Field"].str.lower().str.contains("closing balance", na=False)
+        if cb_mask.any():
+            st.session_state.metadata.loc[cb_mask, "Value"] = balance
+        else:
+            new_row = pd.DataFrame([["Closing Balance", balance]], columns=["Field", "Value"])
+            st.session_state.metadata = pd.concat([st.session_state.metadata, new_row], ignore_index=True)
+    except:
+        pass
 
 def process_file():
     if st.session_state.uploaded_file is None:
@@ -33,9 +51,9 @@ def process_file():
     try:
         with st.spinner("🔍 Extracting and analyzing..."):
             file_name = st.session_state.uploaded_file.name
-            if file_name.endswith((".xlsx", ".xls")):
+            if file_name.lower().endswith((".xlsx", ".xls")):
                 st.session_state.output_path = excel_parser(st.session_state.uploaded_file)
-            elif file_name.endswith((".pdf", ".png", ".jpg", ".jpeg", ".webp")):
+            elif file_name.lower().endswith((".pdf", ".png", ".jpg", ".jpeg", ".webp")):
                 st.session_state.output_path = image_parser(st.session_state.uploaded_file)
             else:
                 st.error("Unsupported file type.")
@@ -46,189 +64,147 @@ def process_file():
                 return False
 
             full_df = pd.read_excel(st.session_state.output_path, header=None)
-            table_start_idx = full_df[0].astype(str).str.lower().eq("date").idxmax()
-            metadata = full_df.iloc[:table_start_idx].copy()
+            date_mask = full_df[0].astype(str).str.lower().eq("date")
+            if not date_mask.any():
+                st.error("Could not detect 'date' header row in the file.")
+                return False
+            table_start_idx = date_mask.idxmax()
+
+            metadata = full_df.iloc[:table_start_idx, :2].copy()
+            metadata.columns = [0, 1]
+
             table = pd.read_excel(st.session_state.output_path, skiprows=table_start_idx)
+            if 'date' in table.columns:
+                table['date'] = pd.to_datetime(table['date'], errors='coerce')
 
-            if "date" in table.columns:
-                table["date"] = pd.to_datetime(table["date"], errors='coerce')
+            opening_balance = 0
+            try:
+                ob_row = metadata[metadata[0].astype(str).str.lower().str.contains('opening balance', na=False)]
+                if not ob_row.empty:
+                    opening_balance = float(ob_row[1].values[0])
+            except:
+                pass
 
-            st.session_state.metadata = metadata
+            table = recalculate_balance(table, opening_balance=opening_balance)
+
+            meta_df = metadata.copy().astype(str)
+            meta_df.columns = ["Field", "Value"]
+
+            closing_balance = table['balance'].iloc[-1]
+            update_closing_balance_in_metadata(closing_balance)
+
+            st.session_state.metadata = meta_df
             st.session_state.df = table
             st.session_state.last_saved_df = table.copy()
             st.session_state.processed = True
             st.session_state.editor_key += 1
-
             st.success("File processed successfully!")
             return True
-
     except Exception as e:
-        st.error(f"Error processing file: {str(e)}")
+        st.error(f"Error processing file: {e}")
         return False
-
 
 def save_changes():
     try:
+        closing_balance = st.session_state.df['balance'].iloc[-1]
+        update_closing_balance_in_metadata(closing_balance)
+
         with pd.ExcelWriter(st.session_state.output_path, engine='openpyxl') as writer:
             st.session_state.metadata.to_excel(writer, index=False, header=False)
-            st.session_state.df.to_excel(writer, index=False, startrow=len(st.session_state.metadata))
+            pd.DataFrame([[]]).to_excel(writer, index=False, header=False, startrow=len(st.session_state.metadata))
+            st.session_state.df.to_excel(writer, index=False, startrow=len(st.session_state.metadata) + 1)
         st.session_state.last_saved_df = st.session_state.df.copy()
         st.success("✅ Changes saved successfully!")
         st.session_state.editor_key += 1
     except Exception as e:
-        st.error(f"Error saving file: {str(e)}")
-
-def recalculate_balance(df, opening_balance=None):
-    df = df.copy()
-    if opening_balance is None:
-        try:
-            # Try to get from metadata if exists
-            opening_balance = float(
-                df.loc[0, "balance"]
-                if "balance" in df.columns
-                else 0
-            )
-        except:
-            opening_balance = 0
-
-    df["balance"] = opening_balance
-    for i in range(len(df)):
-        debit = df.at[i, "debit"] if "debit" in df.columns else 0
-        credit = df.at[i, "credit"] if "credit" in df.columns else 0
-
-        debit = float(debit) if pd.notna(debit) else 0
-        credit = float(credit) if pd.notna(credit) else 0
-
-        if i == 0:
-            df.at[i, "balance"] = opening_balance + credit - debit
-        else:
-            df.at[i, "balance"] = df.at[i-1, "balance"] + credit - debit
-    
-    print("====> recalculted balance", df)
-    return df
-
+        st.error(f"Error saving file: {e}")
 
 def main():
     initialize_session()
 
-    uploaded_file = st.file_uploader(
-        "Upload PDF, Image, or Excel",
-        type=["pdf", "png", "jpg", "jpeg", "webp", "xls", "xlsx"],
-        key="file_uploader"
-    )
-
+    uploaded_file = st.file_uploader("Upload PDF, Image, or Excel",
+                                     type=["pdf", "png", "jpg", "jpeg", "webp", "xls", "xlsx"],
+                                     key="file_uploader")
     if uploaded_file:
         st.session_state.uploaded_file = uploaded_file
 
-    if st.session_state.uploaded_file:
-        if st.button("🔍 Extract Data", type="primary"):
-            if process_file():
-                st.rerun()
+    if st.session_state.uploaded_file and st.button("🔍 Extract Data", type="primary"):
+        if process_file():
+            st.rerun()
 
     if st.session_state.processed:
         st.subheader("🧾 Metadata")
-
-        meta_df = st.session_state.metadata.copy()
-
-        # Ensure exactly 2 columns, and convert both to strings
-        meta_df = meta_df.iloc[:, :2]
-        meta_df.columns = ["Field", "Value"]
-        meta_df = meta_df.astype(str)  # <- Force both columns to string type
-
-        meta_edited = st.data_editor(
+        meta_df = st.session_state.metadata.copy().astype(str)
+        edited_meta = st.data_editor(
             meta_df,
             key=f"meta_editor_{st.session_state.editor_key}",
             column_config={
                 "Field": st.column_config.TextColumn("Field"),
-                "Value": st.column_config.TextColumn("Value"),  # Editable now
+                "Value": st.column_config.TextColumn("Value"),
             },
             use_container_width=True,
             num_rows="dynamic"
         )
+        st.session_state.metadata = edited_meta
 
-        st.session_state.metadata = meta_edited
-
-
-        # === Editable Transactions Section ===
         st.subheader("📊 Edit Transactions")
-
-        # Always use current working df
         working_df = st.session_state.df.copy()
 
-        # Try to get opening balance from metadata
-        opening_balance = None
-        if st.session_state.metadata is not None:
-            meta_df = st.session_state.metadata
-            try:
-                meta_df.columns = ["Field", "Value"]
-                opening_balance_row = meta_df[meta_df["Field"].str.lower().str.contains("opening balance")]
-                if not opening_balance_row.empty:
-                    opening_balance = float(opening_balance_row["Value"].values[0])
-            except:
-                opening_balance = None
+        opening_balance = 0
+        try:
+            ob_row = edited_meta[edited_meta["Field"].str.lower().str.contains("opening balance", na=False)]
+            if not ob_row.empty:
+                opening_balance = float(ob_row["Value"].values[0])
+        except:
+            pass
 
-        # Recalculate balance before editing
         working_df = recalculate_balance(working_df, opening_balance=opening_balance)
 
-        # Define column configs
+        try:
+            closing_balance = working_df['balance'].iloc[-1]
+            update_closing_balance_in_metadata(closing_balance)
+        except:
+            pass
+
         column_config = {}
         for col in working_df.columns:
-            dtype = working_df[col].dtype
-            if pd.api.types.is_datetime64_any_dtype(dtype):
-                column_config[col] = st.column_config.DateColumn(col, format="YYYY-MM-DD", required=False)
-            elif pd.api.types.is_numeric_dtype(dtype):
-                if col.lower() == "amount":
-                    column_config[col] = st.column_config.NumberColumn(col, format="$%.2f")
-                else:
-                    column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+            if pd.api.types.is_datetime64_any_dtype(working_df[col].dtype):
+                column_config[col] = st.column_config.DateColumn(col)
+            elif pd.api.types.is_numeric_dtype(working_df[col].dtype):
+                column_config[col] = st.column_config.NumberColumn(col, format="%.2f", disabled=(col == "balance"))
             else:
                 column_config[col] = st.column_config.TextColumn(col)
 
-        # Disable editing of balance column (optional)
-        if "balance" in column_config:
-            column_config["balance"] = st.column_config.NumberColumn("Balance", format="%.2f", disabled=True)
-
-        # Show editable table (no balance yet)
-        editable_columns = [col for col in working_df.columns if col.lower() not in ["balance"]]
-        editable_df = working_df[editable_columns].copy()
-
-        edited_df = st.data_editor(
-            editable_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            height=500,
+        edited_tbl = st.data_editor(
+            working_df,
             key=f"editor_{st.session_state.editor_key}",
-            column_config={col: column_config[col] for col in editable_columns}
+            column_config=column_config,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=400
         )
 
-        # Detect if anything changed from previous
-        if not edited_df.equals(st.session_state.df[editable_columns]):
-            # Copy edited values into df
-            for col in editable_columns:
-                st.session_state.df[col] = edited_df[col]
+        editable_cols = [c for c in working_df.columns if c != "balance"]
+        if not edited_tbl[editable_cols].equals(st.session_state.df[editable_cols]):
+            for c in editable_cols:
+                st.session_state.df[c] = edited_tbl[c]
+            st.session_state.df = recalculate_balance(st.session_state.df, opening_balance)
+            st.session_state.editor_key += 1
+            st.rerun()
 
-            # Recalculate balance
-            st.session_state.df = recalculate_balance(st.session_state.df, opening_balance=opening_balance)
-            st.success("✅ Balance recalculated after edit.")
-
-        # Show updated table with balance
-        st.dataframe(st.session_state.df, use_container_width=True)
-
-
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("💾 Save Changes", help="Save changes to original file"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("💾 Save Changes"):
                 save_changes()
-        with col2:
-            if st.button("🔄 Reset to Last Saved", help="Discard unsaved changes"):
+        with c2:
+            if st.button("🔄 Reset"):
                 st.session_state.df = st.session_state.last_saved_df.copy()
                 st.session_state.editor_key += 1
                 st.rerun()
-        with col3:
-            if st.button("✖️ New File", help="Start over with a new file"):
-                for key in ['processed', 'output_path', 'df', 'uploaded_file', 'last_saved_df', 'metadata']:
-                    st.session_state[key] = None
+        with c3:
+            if st.button("✖️ New File"):
+                for k in ['processed', 'output_path', 'df', 'uploaded_file', 'last_saved_df', 'metadata']:
+                    st.session_state.pop(k, None)
                 st.session_state.editor_key = 0
                 st.rerun()
 
@@ -241,7 +217,6 @@ def main():
                 file_name=f"edited_{os.path.basename(st.session_state.output_path)}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
 
 if __name__ == "__main__":
     main()
