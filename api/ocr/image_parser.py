@@ -46,7 +46,7 @@ def parse_with_openai(text):
     Extract transactions into JSON array with:
     - Account: [Full account name]
     - Ledger: [Bank name]
-    - "opening_balance": null if there is no opening balance field or previous balance field in the image
+    - "opening_balance": null if there is no "opening balance" field or "previous balance" field in the image
     - "closing_balance": float
     - "transactions": [ 
         {
