@@ -1,6 +1,6 @@
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 import logging
-from formatting import apply_cell_formatting
+from api.reconciler.formatting import apply_cell_formatting
 
 
 # Set up logging
