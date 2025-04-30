@@ -37,9 +37,9 @@ def display_results(output_path):
                 type="primary"
             )
 def display_excel(file_path):
-    """Display Excel file content in Streamlit with type handling"""
+    """Display Excel file content in Streamlit with all columns"""
     try:
-        # Read with type conversion
+        # Read Excel with proper formatting
         df = pd.read_excel(
             file_path,
             dtype={
@@ -48,24 +48,42 @@ def display_excel(file_path):
                 'debit': 'float64',
                 'credit': 'float64',
                 'Remarks': 'string'
-            }
+            },
+            keep_default_na=False  # Preserve empty cells as empty strings
         )
         
-        # Clean up any unnamed columns
-        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+        # Clean up any hidden columns and index columns
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed|^index|^level_', case=False)]
         
         # Format datetime columns
         if 'date' in df.columns:
             df['date'] = df['date'].dt.strftime('%Y-%m-%d')
         
-        # Convert all columns to string type for safe display
-        display_df = df.astype('string').fillna('')
+        # Convert numeric columns to proper types
+        num_cols = ['debit', 'credit']
+        for col in num_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        st.dataframe(display_df, height=500, use_container_width=True)
+        # Display all columns without truncation
+        pd.set_option('display.max_columns', None)
+        st.dataframe(
+            df,
+            height=500,
+            use_container_width=True,
+            column_config={
+                "date": st.column_config.DateColumn("Date"),
+                "description": st.column_config.TextColumn("Description"),
+                "debit": st.column_config.NumberColumn("Debit", format="$%.2f"),
+                "credit": st.column_config.NumberColumn("Credit", format="$%.2f"),
+                "Remarks": st.column_config.TextColumn("Remarks")
+            }
+        )
+        pd.reset_option('display.max_columns')
         
     except Exception as e:
         st.error(f"Error displaying file: {str(e)}")
-        
+
 def dual_ledger_page():
     st.title("Dual Ledger Reconciliation 🔄")
     
