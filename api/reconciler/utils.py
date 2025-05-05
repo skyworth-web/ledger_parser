@@ -2,6 +2,8 @@ import math
 import pandas as pd
 from datetime import datetime, date
 from api.reconciler.config_utils import load_config
+import logging
+
 
 config = load_config()
 amount_tolerance = config.get("match_tolerance", 0.01)
@@ -58,15 +60,38 @@ def round_half_up(n):
         return math.floor(n + 0.5) if n >= 0 else math.ceil(n - 0.5)
     return n
 
-def calculate_closing_balance(df):
-    print("Calculating closing balance...")
-    df_filled = df.fillna(0)
-    sum_debit = df_filled["debit"].sum()
-    sum_credit = df_filled["credit"].sum()
-    if sum_credit > sum_debit:
-        closing_debit = sum_credit - sum_debit
-        closing_credit = 0
-    else:
-        closing_debit = 0
-        closing_credit = sum_debit - sum_credit
-    return closing_debit, closing_credit
+def calculate_closing_balance(df, opening_balance):
+    logger = logging.getLogger(__name__)
+    
+    # Validate opening_balance
+    if not isinstance(opening_balance, (int, float)):
+        logger.error("Opening balance must be a numeric type.")
+        return {"closing_debit": None, "closing_credit": None}
+
+    try:
+        logger.info("Calculating closing balance...")
+        
+        # Fill NaN values with 0
+        df_filled = df.fillna(0)  
+        
+        # Calculate total debits and credits
+        sum_debit = df_filled["debit"].sum()  
+        sum_credit = df_filled["credit"].sum()  
+        
+        # Calculate the net balance
+        net_balance = opening_balance + sum_credit - sum_debit
+        if net_balance > 0:
+            closing_debit = 0
+            closing_credit = net_balance
+        else:
+            closing_debit = -net_balance
+            closing_credit = 0
+            
+        return {"closing_debit": closing_debit, "closing_credit": closing_credit}
+    
+    except KeyError as e:
+        logger.error(f"Missing column in input DataFrame: {e}")
+        return {"closing_debit": None, "closing_credit": None}
+    except Exception as e:
+        logger.error(f"An error occurred while calculating closing balance: {e}")
+        return {"closing_debit": None, "closing_credit": None}
