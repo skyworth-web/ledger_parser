@@ -112,6 +112,10 @@ def reconcile_statement(file_path1, file_path2):
         wb2 = load_workbook(file_path2)
         source_ws1 = wb1["Sheet1"]
         source_ws2 = wb2["Sheet1"]
+        opening_balance1 = float(source_ws1['B3'].value)
+        opening_balance2 = float(source_ws2['B3'].value)
+        print(f"Opening balance for Ledger1: {opening_balance1}")
+        print(f"Opening balance for Ledger2: {opening_balance2}")
     except Exception as e:
         logger.error(f"Error loading input files: {e}")
         return False
@@ -198,8 +202,15 @@ def reconcile_statement(file_path1, file_path2):
                            rounding_rows1, rounding_rows2,
                            unmatched_rows1, unmatched_rows2)
 
-    closing_debit1, closing_credit1 = calculate_closing_balance(df1)
-    closing_debit2, closing_credit2 = calculate_closing_balance(df2)
+    closing_balance1 = calculate_closing_balance(df1, opening_balance1)
+    closing_debit1 = closing_balance1['closing_debit']
+    closing_credit1 = closing_balance1['closing_credit']
+    closing_balance2 = calculate_closing_balance(df2, opening_balance2)
+    closing_debit2 = closing_balance2['closing_debit']
+    closing_credit2 = closing_balance2['closing_credit']
+
+    print(f"Closing balance for Ledger1: {closing_debit1} (Debit), {closing_credit1} (Credit)")
+    print(f"Closing balance for Ledger2: {closing_debit2} (Debit), {closing_credit2} (Credit)")
 
     closing_match = (compare_values(closing_debit1, closing_credit2) and
                      compare_values(closing_credit1, closing_debit2))
